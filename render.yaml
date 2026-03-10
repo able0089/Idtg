@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: poketwo-bot
+    env: node
+    buildCommand: npm install
+    startCommand: node index.js
+    envVars:
+      - key: TOKEN
+        sync: false
+        # Enter your Discord token in the Render dashboard

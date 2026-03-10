@@ -20,7 +20,6 @@ let worker = null;
 let messageCount = 0;
 
 const client = new Client({
-  intents: 32767,
   partials: ['MESSAGE', 'CHANNEL', 'GUILD_MEMBER', 'USER', 'GUILD'],
   allowWebAssembly: true,
   retryLimit: 5,

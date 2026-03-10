@@ -21,8 +21,14 @@ let messageCount = 0;
 
 const client = new Client({
   intents: 32767,
-  checkUpdate: false,
-  partials: ['MESSAGE', 'CHANNEL', 'GUILD_MEMBER', 'USER', 'GUILD']
+  partials: ['MESSAGE', 'CHANNEL', 'GUILD_MEMBER', 'USER', 'GUILD'],
+  allowWebAssembly: true,
+  retryLimit: 5,
+  checkUpdate: false
+});
+
+client.on('debug', (info) => {
+  console.log('[Discord Debug]', info);
 });
 
 console.log('[Init] Discord client created');

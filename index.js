@@ -143,15 +143,10 @@ client.on('messageCreate', async (msg) => {
     
     console.log(`[Message #${messageCount}] From ${msg.author.username}: ${textContent.substring(0, 50).replace(/\n/g, ' ')}`);
     
-    // 1. Auto-hint for wild pokemons
-    if (textContent.toLowerCase().includes('a wild') && isPoketwo) {
-      console.log('[Wild Pokemon] Appeared! Requesting hint in 2s...');
-      setTimeout(() => {
-        msg.channel.send(`<@${POKETWO_ID}> h`).catch(e => console.error('[Send Error]', e.message));
-      }, 2000);
-    }
+    // We removed the auto-hint logic as it causes issues with user limits
+    // Relying strictly on assistant bots and Poketwo OCR
     
-    // 2. Hint lists
+    // 1. Assistant Hint lists (if an assistant bot posts hints in text)
     if (textContent.includes('Possible pokemons:') || textContent.includes('Possible Pokémon:')) {
       console.log('[Hints] Found hint list');
       let poke = null;
@@ -176,7 +171,7 @@ client.on('messageCreate', async (msg) => {
       }
     }
     
-    // 3. OCR / Direct name
+    // 2. OCR / Direct name (The core logic to read from Assistant/Naming bots)
     if (isPoketwo || isAssistant) {
       let poke = null;
       
@@ -189,6 +184,7 @@ client.on('messageCreate', async (msg) => {
         }
       }
       
+      // Look for the Pokemon name in the image from the Assistant Bot
       if (!poke && imageUrl) {
         console.log('[Image] No text match, trying OCR on:', imageUrl.substring(0, 50));
         try {
@@ -212,7 +208,7 @@ client.on('messageCreate', async (msg) => {
       }
     }
     
-    // 4. Captcha detection
+    // 3. Captcha detection
     if (isPoketwo) {
       if (textContent.includes('verify') || textContent.includes('captcha') || textContent.includes('human')) {
         console.log('[Captcha] Detected - sending recovery');

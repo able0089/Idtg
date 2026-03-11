@@ -6,8 +6,8 @@ console.log('[Startup] Pokétwo Bot Initializing...');
 
 const TOKEN = process.env.TOKEN;
 if (!TOKEN) {
-  console.error('[Error] TOKEN not set');
-  process.exit(1);
+  console.error('[Error] TOKEN not set! The bot cannot connect to Discord without it.');
+  console.error('[Fix] Please go to your Railway Project -> Variables tab -> Add New Variable -> name it TOKEN and paste your Discord token as the value.');
 }
 
 const POKETWO_ID = '716390085896962058';
@@ -239,10 +239,14 @@ app.listen(PORT, '0.0.0.0', () => console.log('[Server] Running on port', PORT))
 
 console.log('[Login] Connecting to Discord...');
 
-client.login(TOKEN).catch((e) => {
-  console.error('[Login Failed]', e.message);
-  setTimeout(() => process.exit(1), 1000);
-});
+if (TOKEN) {
+  client.login(TOKEN).catch((e) => {
+    console.error('[Login Failed]', e.message);
+    setTimeout(() => process.exit(1), 1000);
+  });
+} else {
+  console.log('[Login Skipped] No token provided, running web server only.');
+}
 
 setTimeout(() => {
   if (!discordReady) {

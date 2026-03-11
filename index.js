@@ -125,59 +125,75 @@ client.on('messageCreate', async (msg) => {
       return;
     }
     
-    console.log(`[Message #${messageCount}] From ${msg.author.username} in ${msg.channel?.name || 'DM'}: ${msg.content?.substring(0, 50) || '(embeds)'}`);
+    const isPoketwo = msg.author.id === POKETWO_ID;
+    const isAssistant = msg.author.username.includes('Poké-Name') || msg.author.username.includes('P2 Assistant') || msg.author.username.toLowerCase().includes('assistant');
     
-    if (!msg.embeds.length) {
-      console.log('[Message] No embeds - checking for text commands');
-      
-      if (msg.content.includes('Possible pokemons:') || msg.content.includes('Possible Pokémon:')) {
-        console.log('[Hints] Found hint list');
-        const hints = msg.content.split(/Possible Pok[eé]mons?:/i)[1];
+    let textContent = msg.content || '';
+    let imageUrl = null;
+    
+    if (msg.embeds && msg.embeds.length > 0) {
+      const emb = msg.embeds[0];
+      textContent += ' ' + (emb.title || '') + ' ' + (emb.description || '');
+      imageUrl = emb.image?.url || emb.thumbnail?.url;
+    }
+    
+    if (msg.attachments && msg.attachments.size > 0) {
+      imageUrl = imageUrl || msg.attachments.first().url;
+    }
+    
+    console.log(`[Message #${messageCount}] From ${msg.author.username}: ${textContent.substring(0, 50).replace(/\n/g, ' ')}`);
+    
+    // 1. Auto-hint for wild pokemons
+    if (textContent.toLowerCase().includes('a wild') && isPoketwo) {
+      console.log('[Wild Pokemon] Appeared! Requesting hint in 2s...');
+      setTimeout(() => {
+        msg.channel.send(`<@${POKETWO_ID}> h`).catch(e => console.error('[Send Error]', e.message));
+      }, 2000);
+    }
+    
+    // 2. Hint lists
+    if (textContent.includes('Possible pokemons:') || textContent.includes('Possible Pokémon:')) {
+      console.log('[Hints] Found hint list');
+      let poke = null;
+      const m = textContent.match(/(?:\d+\)\s+|Pokémon:\s+|pokemons:\s+)([a-zA-Z0-9\- ]+)/i);
+      if (m) {
+        poke = extractPokemonName(m[1]);
+      } else {
+        const hints = textContent.split(/Possible Pok[eé]mons?:/i)[1];
         if (hints) {
-          const names = hints.split(/,|\s+/).map(n => n.trim().replace(/[^a-zA-Z0-9\-]/g, '')).filter(n => n.length > 2);
-          names.forEach((n, i) => {
-            setTimeout(() => {
-              msg.channel.send(`<@${POKETWO_ID}> catch ${n.toLowerCase()}`).catch(e => console.error('[Send Error]', e.message));
-            }, i * 3000 + 500);
-          });
+          const match = hints.match(/([A-Z][a-z]+)/);
+          if (match) {
+            poke = extractPokemonName(match[1]);
+          }
         }
       }
       
-      if (msg.content.includes('⏳')) {
-        console.log('[Cooldown] Detected');
+      if (poke) {
+        console.log('[CATCH] Hint match:', poke);
         setTimeout(() => {
-          msg.channel.send(`<@${POKETWO_ID}> h`).catch(e => console.error('[Send Error]', e.message));
-        }, 3500);
+          msg.channel.send(`<@${POKETWO_ID}> c ${poke.toLowerCase()}`).catch(e => console.error('[Send Error]', e.message));
+        }, 500);
       }
-      
-      return;
     }
     
-    console.log('[Message] Has embeds - checking for Pokémon info');
-    
-    if (msg.author.id === POKETWO_ID || msg.author.username.includes('Poké-Name') || msg.author.username.includes('P2 Assistant')) {
-      console.log('[Bot Embed] Found embed message from', msg.author.username);
-      const emb = msg.embeds[0];
+    // 3. OCR / Direct name
+    if (isPoketwo || isAssistant) {
       let poke = null;
       
-      const text = (emb.title || '') + ' ' + (emb.description || '');
-      console.log('[Bot Embed] Text:', text.substring(0, 100));
-      
-      if (text.includes('Name of the Pokemon') || text.includes('Possible')) {
+      if (textContent.includes('Name of the Pokemon') || textContent.includes('Found')) {
         console.log('[Poké-Name] Trying text extraction');
-        const m = text.match(/(?:\d+\)\s+|Pokémon:\s+|pokemons:\s+)([a-zA-Z0-9\- ]+)/i);
+        const m = textContent.match(/(?:\d+\)\s+|Pokémon:\s+|pokemons:\s+)([a-zA-Z0-9\- ]+)/i);
         if (m) {
           poke = extractPokemonName(m[1]);
           console.log('[Poké-Name] Text extraction result:', poke);
         }
       }
       
-      if (!poke && (emb.image?.url || emb.thumbnail?.url)) {
-        const url = emb.image?.url || emb.thumbnail?.url;
-        console.log('[Poké-Name] No text match, trying OCR on:', url.substring(0, 50));
+      if (!poke && imageUrl) {
+        console.log('[Image] No text match, trying OCR on:', imageUrl.substring(0, 50));
         try {
           if (worker) {
-            const res = await worker.recognize(url);
+            const res = await worker.recognize(imageUrl);
             poke = extractPokemonName(res.data.text);
             console.log('[OCR] Extracted:', poke || 'none');
           } else {
@@ -191,14 +207,14 @@ client.on('messageCreate', async (msg) => {
       if (poke) {
         console.log('[CATCH] Sending catch for:', poke);
         setTimeout(() => {
-          msg.channel.send(`<@${POKETWO_ID}> catch ${poke.toLowerCase()}`).catch(e => console.error('[Send Error]', e.message));
+          msg.channel.send(`<@${POKETWO_ID}> c ${poke.toLowerCase()}`).catch(e => console.error('[Send Error]', e.message));
         }, 500);
       }
     }
     
-    if (msg.author.id === POKETWO_ID) {
-      console.log('[Pokétwo] Message from Pokétwo:', msg.content.substring(0, 100));
-      if (msg.content.includes('verify') || msg.content.includes('captcha') || msg.content.includes('human')) {
+    // 4. Captcha detection
+    if (isPoketwo) {
+      if (textContent.includes('verify') || textContent.includes('captcha') || textContent.includes('human')) {
         console.log('[Captcha] Detected - sending recovery');
         msg.channel.send(`<@${POKETWO_ID}> inc p`).catch(() => {});
         msg.channel.send(`<@${POKETWO_ID}> inc p all -y`).catch(() => {});
@@ -223,7 +239,7 @@ app.get('/', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log('[Server] Running on port', PORT));
+app.listen(PORT, '0.0.0.0', () => console.log('[Server] Running on port', PORT));
 
 console.log('[Login] Connecting to Discord...');
 

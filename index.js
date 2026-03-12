@@ -1,3 +1,5 @@
+if (typeof File === 'undefined') { global.File = require('buffer').File; }
+
 const express = require('express');
 const { Client } = require('discord.js-selfbot-v13');
 const { createWorker } = require('tesseract.js');

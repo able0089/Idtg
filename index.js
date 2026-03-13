@@ -69,11 +69,15 @@ function downloadToTemp(url) {
 function preprocessImage(inputPath) {
   return new Promise((resolve, reject) => {
     const outPath = inputPath.replace('_in.png', '_out.png');
-    // Crop left 60% (removes the Pokémon sprite), scale to 800px wide, greyscale
-    const cmd = `magick "${inputPath}" -crop 60%x100%+0+0 +repage -resize 800x300 -colorspace Gray "${outPath}"`;
-    exec(cmd, err => {
-      if (err) return reject(err);
-      resolve(outPath);
+    // Crop left 60% (removes the Pokémon sprite on the right), scale up, greyscale
+    const args = `"${inputPath}" -crop 60%x100%+0+0 +repage -resize 800x300 -colorspace Gray "${outPath}"`;
+    // Try 'magick' (ImageMagick v7) first, fall back to 'convert' (v6)
+    exec(`magick ${args}`, err => {
+      if (!err) return resolve(outPath);
+      exec(`convert ${args}`, err2 => {
+        if (err2) return reject(new Error(`ImageMagick not available: ${err.message}`));
+        resolve(outPath);
+      });
     });
   });
 }
@@ -100,39 +104,50 @@ async function ocrImageUrl(url) {
 }
 
 function extractPokemonName(rawText) {
-  if (!rawText || rawText.length === 0) return null;
-  
-  console.log('[OCR Raw]', JSON.stringify(rawText.substring(0, 200)));
-  
-  // Strip non-latin characters and clean up
+  if (!rawText || rawText.trim().length === 0) return null;
+
+  console.log('[OCR Raw]', JSON.stringify(rawText.substring(0, 300)));
+
+  // Normalise line endings, drop non-printable chars but keep letters/hyphens/spaces/newlines
   const clean = rawText
+    .replace(/\r\n/g, '\n')
     .replace(/[\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\uFF00-\uFFEF\u4E00-\u9FAF\u3400-\u4DBF]/g, '')
     .replace(/[^\x20-\x7E\n]/g, ' ')
     .trim();
-  
-  const lines = clean.split('\n').map(l => l.trim()).filter(l => l.length > 1);
+
+  const lines = clean.split('\n').map(l => l.trim()).filter(l => l.length >= 2);
   if (!lines.length) return null;
-  
-  console.log('[OCR Lines]', lines.slice(0, 5));
-  
-  // Search every line for a plausible Pokémon name (3-20 alpha chars, may have hyphen)
+
+  console.log('[OCR Lines]', lines);
+
   for (const line of lines) {
-    // Strip punctuation/numbers from around words
-    const words = line.split(/[\s,.:;!?|()[\]{}"']+/).filter(w => w.length > 0);
-    for (const word of words) {
-      const cleaned = word.replace(/[^a-zA-Z\-]/g, '');
-      if (cleaned.length >= 3 && cleaned.length <= 20 && /^[a-zA-Z]/.test(cleaned)) {
-        // Capitalise properly
-        const proper = cleaned.charAt(0).toUpperCase() + cleaned.slice(1).toLowerCase();
-        // Ignore common non-pokemon english words from OCR noise
-        const noise = new Set(['The','Pokemon','Wild','Has','Appeared','Name','Its','This','Your','That','From','With','Into','Have','Been','Will','They','Their','What','Which','When','Where','Here','There','These','Those','Were','Been','Than','Then','Some','Such','More','Most','Just','Also','Only','Very','Even','Back','Good','Much','Well','Long','Down','Over','After','First','Last','Before','Being','Other','Many','Same','Few','Way','Can','Did','His','Her','Him','How','Its','May','Out','Own','She','Too','Try','Via','Yes','And','But','For','Not','One','Two','Are','All','Any','Get','Got','Had','Has','Him','Its','Let','Now','Old','Our','Out','Put','Run','See','Set','She','Sit','Six','Ten','Too','Two','Use','Was','Who','Why']);
-        if (!noise.has(proper) && proper.length >= 3) {
-          return proper;
-        }
-      }
+    // Keep only letters, hyphens, spaces (valid in Pokémon names)
+    const stripped = line.replace(/[^a-zA-Z\- ]/g, '').trim();
+    if (!stripped || stripped.length < 3) continue;
+
+    // Count uppercase vs lowercase letters
+    const letters = stripped.replace(/[^a-zA-Z]/g, '');
+    if (letters.length === 0) continue;
+    const upperCount = letters.replace(/[^A-Z]/g, '').length;
+    const upperRatio = upperCount / letters.length;
+
+    // Poké-Name sends English names in ALL CAPS, alt-language names in lowercase.
+    // Only accept lines that are mostly uppercase (≥60% uppercase letters).
+    if (upperRatio < 0.6) {
+      console.log('[OCR] Skipping lowercase/alt-language line:', stripped);
+      continue;
+    }
+
+    // Convert to lowercase for the catch command
+    // (Pokétwo accepts lowercase: "c hakamo-o", "c three-segment dudunsparce")
+    const result = stripped.toLowerCase().replace(/\s+/g, ' ').trim();
+
+    if (result.length >= 3 && result.length <= 50) {
+      console.log('[OCR] Extracted name:', result);
+      return result;
     }
   }
-  
+
   return null;
 }
 

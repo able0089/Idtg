@@ -1,6 +1,9 @@
 [variables]
 NODE_VERSION = "20"
 
+[phases.setup]
+aptPkgs = ["imagemagick"]
+
 [phases.install]
 cmds = ["npm ci --omit=dev"]
 

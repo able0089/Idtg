@@ -3,6 +3,11 @@ if (typeof File === 'undefined') { global.File = require('buffer').File; }
 const express = require('express');
 const { Client } = require('discord.js-selfbot-v13');
 const { createWorker } = require('tesseract.js');
+const { exec } = require('child_process');
+const https = require('https');
+const http = require('http');
+const fs = require('fs');
+const os = require('os');
 
 console.log('[Startup] Pokétwo Bot Initializing...');
 
@@ -38,9 +43,59 @@ async function initOCR() {
   try {
     console.log('[OCR] Initializing...');
     worker = await createWorker('eng');
+    await worker.setParameters({ tessedit_pageseg_mode: '7' });
     console.log('[OCR] Ready');
   } catch (e) {
     console.error('[OCR] Failed:', e.message);
+  }
+}
+
+function downloadToTemp(url) {
+  return new Promise((resolve, reject) => {
+    const tmpPath = `${os.tmpdir()}/pk_${Date.now()}_in.png`;
+    const file = fs.createWriteStream(tmpPath);
+    const proto = url.startsWith('https') ? https : http;
+    proto.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, res => {
+      if (res.statusCode !== 200) {
+        file.close();
+        return reject(new Error(`HTTP ${res.statusCode}`));
+      }
+      res.pipe(file);
+      file.on('finish', () => { file.close(); resolve(tmpPath); });
+    }).on('error', err => { file.close(); fs.unlink(tmpPath, () => {}); reject(err); });
+  });
+}
+
+function preprocessImage(inputPath) {
+  return new Promise((resolve, reject) => {
+    const outPath = inputPath.replace('_in.png', '_out.png');
+    // Crop left 60% (removes the Pokémon sprite), scale to 800px wide, greyscale
+    const cmd = `magick "${inputPath}" -crop 60%x100%+0+0 +repage -resize 800x300 -colorspace Gray "${outPath}"`;
+    exec(cmd, err => {
+      if (err) return reject(err);
+      resolve(outPath);
+    });
+  });
+}
+
+async function ocrImageUrl(url) {
+  let inPath = null;
+  let outPath = null;
+  try {
+    console.log('[OCR] Downloading image...');
+    inPath = await downloadToTemp(url);
+    outPath = await preprocessImage(inPath);
+    if (!worker) return null;
+    const result = await worker.recognize(outPath);
+    const raw = result.data.text.trim();
+    console.log('[OCR Raw]', JSON.stringify(raw));
+    return raw;
+  } catch (e) {
+    console.error('[OCR Pipeline Error]', e.message);
+    return null;
+  } finally {
+    if (inPath) fs.unlink(inPath, () => {});
+    if (outPath) fs.unlink(outPath, () => {});
   }
 }
 
@@ -205,17 +260,13 @@ client.on('messageCreate', async (msg) => {
       
       // Look for the Pokemon name in the image from the Assistant Bot
       if (!poke && imageUrl) {
-        console.log('[Image] No text match, trying OCR on:', imageUrl.substring(0, 50));
-        try {
-          if (worker) {
-            const res = await worker.recognize(imageUrl);
-            poke = extractPokemonName(res.data.text);
-            console.log('[OCR] Extracted:', poke || 'none');
-          } else {
-            console.log('[OCR] Worker not ready yet');
-          }
-        } catch (e) {
-          console.error('[OCR Error]', e.message);
+        console.log('[Image] Running OCR pipeline on:', imageUrl.substring(0, 60));
+        if (worker) {
+          const rawText = await ocrImageUrl(imageUrl);
+          poke = extractPokemonName(rawText);
+          console.log('[OCR] Final result:', poke || 'none');
+        } else {
+          console.log('[OCR] Worker not ready yet');
         }
       }
       

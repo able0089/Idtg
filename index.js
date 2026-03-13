@@ -212,7 +212,7 @@ function startSpammer() {
     } catch (e) {
       console.error('[Spammer Error]', e.message);
     }
-  }, 3000);
+  }, 8000);
 }
 
 client.once('ready', () => {
@@ -322,7 +322,7 @@ client.on('messageCreate', async (msg) => {
 
     // ── 4. IMAGE OCR (any bot that sends an image, e.g. Poké-Name) ──────────
     if (isBot && imageUrl) {
-      console.log(`[Image] Bot "${msg.author.username}" sent image — running OCR`);
+      console.log(`[Image] Bot "${msg.author.username}" sent image — URL: ${imageUrl}`);
       if (worker) {
         const rawText = await ocrImageUrl(imageUrl);
         const poke = extractPokemonName(rawText);

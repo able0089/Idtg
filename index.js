@@ -151,6 +151,41 @@ function extractPokemonName(rawText) {
   return null;
 }
 
+// ── Per-channel wild spawn state ──────────────────────────────────────────────
+const wildState = new Map();
+// { channelId: { timestamp, caught, hintSent, hintTimeout } }
+
+const lastHintTime = new Map();
+const HINT_DELAY_MS = 12 * 1000;    // wait 12s before sending hint
+const HINT_COOLDOWN_MS = 45 * 1000; // minimum 45s between hints per channel
+
+function sendCatch(channel, pokeName) {
+  channel.send(`<@${POKETWO_ID}> c ${pokeName.toLowerCase()}`)
+    .catch(e => console.error('[Send Error]', e.message));
+}
+
+function sendHint(channel) {
+  const now = Date.now();
+  const last = lastHintTime.get(channel.id) || 0;
+  if (now - last < HINT_COOLDOWN_MS) {
+    console.log('[Hint] Cooldown active, skipping for channel', channel.id);
+    return;
+  }
+  lastHintTime.set(channel.id, now);
+  const state = wildState.get(channel.id);
+  if (state) state.hintSent = true;
+  console.log('[Hint] Sending fallback hint to channel', channel.id);
+  channel.send(`<@${POKETWO_ID}> hint`).catch(e => console.error('[Hint Error]', e.message));
+}
+
+function markCaught(channelId) {
+  const state = wildState.get(channelId);
+  if (state) {
+    if (state.hintTimeout) clearTimeout(state.hintTimeout);
+    wildState.delete(channelId);
+  }
+}
+
 let spamInterval = null;
 
 function startSpammer() {
@@ -208,101 +243,111 @@ client.on('disconnect', () => {
 client.on('messageCreate', async (msg) => {
   try {
     messageCount++;
-    
-    if (msg.author.id === client.user.id) {
-      console.log('[Message] Own message - ignoring');
-      return;
-    }
-    
+    if (msg.author.id === client.user.id) return;
+
     const isPoketwo = msg.author.id === POKETWO_ID;
-    const isAssistant = msg.author.username.includes('Poké-Name') || msg.author.username.includes('P2 Assistant') || msg.author.username.toLowerCase().includes('assistant');
-    
+    const isBot = msg.author.bot === true;
+    const channelId = msg.channel.id;
+
+    // Build text content from message + embeds
     let textContent = msg.content || '';
     let imageUrl = null;
-    
-    if (msg.embeds && msg.embeds.length > 0) {
+    if (msg.embeds?.length > 0) {
       const emb = msg.embeds[0];
       textContent += ' ' + (emb.title || '') + ' ' + (emb.description || '');
-      imageUrl = emb.image?.url || emb.thumbnail?.url;
+      imageUrl = emb.image?.url || emb.thumbnail?.url || emb.url || null;
     }
-    
-    if (msg.attachments && msg.attachments.size > 0) {
+    if (msg.attachments?.size > 0) {
       imageUrl = imageUrl || msg.attachments.first().url;
     }
-    
-    console.log(`[Message #${messageCount}] From ${msg.author.username}: ${textContent.substring(0, 50).replace(/\n/g, ' ')}`);
-    
-    // We removed the auto-hint logic as it causes issues with user limits
-    // Relying strictly on assistant bots and Poketwo OCR
-    
-    // 1. Assistant Hint lists (if an assistant bot posts hints in text)
-    if (textContent.includes('Possible pokemons:') || textContent.includes('Possible Pokémon:')) {
-      console.log('[Hints] Found hint list');
-      let poke = null;
-      const m = textContent.match(/(?:\d+\)\s+|Pokémon:\s+|pokemons:\s+)([a-zA-Z0-9\- ]+)/i);
-      if (m) {
-        poke = extractPokemonName(m[1]);
-      } else {
-        const hints = textContent.split(/Possible Pok[eé]mons?:/i)[1];
-        if (hints) {
-          const match = hints.match(/([A-Z][a-z]+)/);
-          if (match) {
-            poke = extractPokemonName(match[1]);
-          }
+    const textLower = textContent.toLowerCase();
+
+    // Log every message (so we can see what usernames bots have)
+    console.log(`[Msg #${messageCount}] ${msg.author.username}${isPoketwo ? ' [P2]' : isBot ? ' [BOT]' : ''}: "${textContent.substring(0, 70).replace(/\n/g, ' ')}"${imageUrl ? ' [IMG]' : ''}`);
+
+    // ── 1. DETECT WILD SPAWN (Pokétwo) ──────────────────────────────────────
+    if (isPoketwo && (textLower.includes('wild') || textLower.includes('appeared'))) {
+      console.log('[Spawn] Wild Pokémon detected in channel', channelId);
+      const prev = wildState.get(channelId);
+      if (prev?.hintTimeout) clearTimeout(prev.hintTimeout);
+
+      const hintTimeout = setTimeout(() => {
+        const state = wildState.get(channelId);
+        if (state && !state.caught) {
+          console.log('[Hint] OCR failed or timed out — sending hint fallback');
+          sendHint(msg.channel);
         }
+      }, HINT_DELAY_MS);
+
+      wildState.set(channelId, { timestamp: Date.now(), caught: false, hintSent: false, hintTimeout });
+    }
+
+    // ── 2. WILD POKÉMON FLED / CAUGHT BY SOMEONE ELSE ───────────────────────
+    if (isPoketwo && (textLower.includes('fled') || textLower.includes('get away') ||
+        textLower.includes('added to your pokédex') || textLower.includes('caught the'))) {
+      console.log('[Spawn] Wild Pokémon resolved, clearing state for channel', channelId);
+      markCaught(channelId);
+    }
+
+    // ── 3. TEXT-BASED NAME READING (works reliably) ──────────────────────────
+    // Matches: Poké-Name text response after hint, or any bot posting the name as text
+    {
+      let poke = null;
+
+      // "Possible Pokémon: Piplup, ..." or "Possible pokemons: Piplup"
+      const listMatch = textContent.match(/Possible Pok[eé]mons?:\s*([^\n,;|]+)/i);
+      if (listMatch) {
+        poke = listMatch[1].trim().toLowerCase().replace(/[^a-z0-9 \-]/g, '').trim();
       }
-      
-      if (poke) {
-        console.log('[CATCH] Hint match:', poke);
-        setTimeout(() => {
-          msg.channel.send(`<@${POKETWO_ID}> c ${poke.toLowerCase()}`).catch(e => console.error('[Send Error]', e.message));
-        }, 500);
+
+      // "Found: Piplup" / "Name: Piplup" / "Name of the Pokemon: Piplup"
+      if (!poke) {
+        const foundMatch = textContent.match(/(?:Found|Name of the pok[eé]mon|Pokemon name|It is)[:\s]+([A-Za-z][A-Za-z0-9 \-]{1,30})/i);
+        if (foundMatch) poke = foundMatch[1].trim().toLowerCase();
+      }
+
+      // Numbered list: "1) Piplup" or "1. Piplup"
+      if (!poke) {
+        const numMatch = textContent.match(/(?:^|\n)\s*\d+[.)]\s*([A-Za-z][A-Za-z0-9 \-]{1,30})/m);
+        if (numMatch) poke = numMatch[1].trim().toLowerCase();
+      }
+
+      if (poke && poke.length >= 3) {
+        console.log('[Text] Pokémon name from text:', poke);
+        markCaught(channelId);
+        setTimeout(() => sendCatch(msg.channel, poke), 500);
+        return; // done
       }
     }
-    
-    // 2. OCR / Direct name (The core logic to read from Assistant/Naming bots)
-    if (isPoketwo || isAssistant) {
-      let poke = null;
-      
-      if (textContent.includes('Name of the Pokemon') || textContent.includes('Found')) {
-        console.log('[Poké-Name] Trying text extraction');
-        const m = textContent.match(/(?:\d+\)\s+|Pokémon:\s+|pokemons:\s+)([a-zA-Z0-9\- ]+)/i);
-        if (m) {
-          poke = extractPokemonName(m[1]);
-          console.log('[Poké-Name] Text extraction result:', poke);
-        }
-      }
-      
-      // Look for the Pokemon name in the image from the Assistant Bot
-      if (!poke && imageUrl) {
-        console.log('[Image] Running OCR pipeline on:', imageUrl.substring(0, 60));
-        if (worker) {
-          const rawText = await ocrImageUrl(imageUrl);
-          poke = extractPokemonName(rawText);
-          console.log('[OCR] Final result:', poke || 'none');
+
+    // ── 4. IMAGE OCR (any bot that sends an image, e.g. Poké-Name) ──────────
+    if (isBot && imageUrl) {
+      console.log(`[Image] Bot "${msg.author.username}" sent image — running OCR`);
+      if (worker) {
+        const rawText = await ocrImageUrl(imageUrl);
+        const poke = extractPokemonName(rawText);
+        if (poke) {
+          console.log('[OCR] Success:', poke);
+          markCaught(channelId);
+          setTimeout(() => sendCatch(msg.channel, poke), 500);
         } else {
-          console.log('[OCR] Worker not ready yet');
+          const state = wildState.get(channelId);
+          const waited = state ? Math.round((Date.now() - state.timestamp) / 1000) : '?';
+          console.log(`[OCR] No name found — hint fallback fires in ~${Math.max(0, 12 - Number(waited))}s`);
         }
-      }
-      
-      if (poke) {
-        console.log('[CATCH] Sending catch for:', poke);
-        setTimeout(() => {
-          msg.channel.send(`<@${POKETWO_ID}> c ${poke.toLowerCase()}`).catch(e => console.error('[Send Error]', e.message));
-        }, 500);
+      } else {
+        console.log('[OCR] Worker not ready, hint fallback will handle it');
       }
     }
-    
-    // 3. Captcha detection
-    if (isPoketwo) {
-      if (textContent.includes('verify') || textContent.includes('captcha') || textContent.includes('human')) {
-        console.log('[Captcha] Detected - sending recovery');
-        msg.channel.send(`<@${POKETWO_ID}> inc p`).catch(() => {});
-        msg.channel.send(`<@${POKETWO_ID}> inc p all -y`).catch(() => {});
-      }
+
+    // ── 5. CAPTCHA ───────────────────────────────────────────────────────────
+    if (isPoketwo && (textLower.includes('verify') || textLower.includes('captcha') || textLower.includes('human'))) {
+      console.log('[Captcha] Detected');
+      msg.channel.send(`<@${POKETWO_ID}> inc p`).catch(() => {});
     }
+
   } catch (e) {
-    console.error('[Message Error]', e.message, e.stack);
+    console.error('[Message Error]', e.message, e.stack?.split('\n').slice(0, 3).join('\n'));
   }
 });
 

@@ -44,24 +44,41 @@ async function initOCR() {
   }
 }
 
-function extractPokemonName(text) {
-  if (!text || text.length === 0) return null;
+function extractPokemonName(rawText) {
+  if (!rawText || rawText.length === 0) return null;
   
-  const clean = text.replace(/[\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\uFF00-\uFFEF\u4E00-\u9FAF\u3400-\u4DBF]|\uD83C[\uDDE6-\uDDFF]\uD83C[\uDDE6-\uDDFF]/g, '').trim();
-  const lines = clean.split('\n').filter(l => l.trim().length > 2);
+  console.log('[OCR Raw]', JSON.stringify(rawText.substring(0, 200)));
   
+  // Strip non-latin characters and clean up
+  const clean = rawText
+    .replace(/[\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\uFF00-\uFFEF\u4E00-\u9FAF\u3400-\u4DBF]/g, '')
+    .replace(/[^\x20-\x7E\n]/g, ' ')
+    .trim();
+  
+  const lines = clean.split('\n').map(l => l.trim()).filter(l => l.length > 1);
   if (!lines.length) return null;
   
-  let name = lines[0].split(/\s{2,}/)[0].split('(')[0].split(',')[0].trim();
-  const match = name.match(/^([A-Z][a-z]+(?:\s[A-Z][a-z]+)?(?:\-[A-Z][a-z]+)?)/);
+  console.log('[OCR Lines]', lines.slice(0, 5));
   
-  if (!match) return null;
+  // Search every line for a plausible Pokémon name (3-20 alpha chars, may have hyphen)
+  for (const line of lines) {
+    // Strip punctuation/numbers from around words
+    const words = line.split(/[\s,.:;!?|()[\]{}"']+/).filter(w => w.length > 0);
+    for (const word of words) {
+      const cleaned = word.replace(/[^a-zA-Z\-]/g, '');
+      if (cleaned.length >= 3 && cleaned.length <= 20 && /^[a-zA-Z]/.test(cleaned)) {
+        // Capitalise properly
+        const proper = cleaned.charAt(0).toUpperCase() + cleaned.slice(1).toLowerCase();
+        // Ignore common non-pokemon english words from OCR noise
+        const noise = new Set(['The','Pokemon','Wild','Has','Appeared','Name','Its','This','Your','That','From','With','Into','Have','Been','Will','They','Their','What','Which','When','Where','Here','There','These','Those','Were','Been','Than','Then','Some','Such','More','Most','Just','Also','Only','Very','Even','Back','Good','Much','Well','Long','Down','Over','After','First','Last','Before','Being','Other','Many','Same','Few','Way','Can','Did','His','Her','Him','How','Its','May','Out','Own','She','Too','Try','Via','Yes','And','But','For','Not','One','Two','Are','All','Any','Get','Got','Had','Has','Him','Its','Let','Now','Old','Our','Out','Put','Run','See','Set','She','Sit','Six','Ten','Too','Two','Use','Was','Who','Why']);
+        if (!noise.has(proper) && proper.length >= 3) {
+          return proper;
+        }
+      }
+    }
+  }
   
-  name = match[1].trim();
-  if (name.length > 20) name = name.split(/\s+/).slice(0, 2).join(' ');
-  
-  name = name.replace(/cuscHoo/i, 'Cubchoo').replace(/[^a-zA-Z\s\-]/g, '').trim();
-  return (name.length > 3 && name.length <= 20) ? name : null;
+  return null;
 }
 
 let spamInterval = null;

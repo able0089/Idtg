@@ -331,12 +331,14 @@ client.on('messageCreate', async (msg) => {
           markCaught(channelId);
           setTimeout(() => sendCatch(msg.channel, poke), 500);
         } else {
-          const state = wildState.get(channelId);
-          const waited = state ? Math.round((Date.now() - state.timestamp) / 1000) : '?';
-          console.log(`[OCR] No name found — hint fallback fires in ~${Math.max(0, 12 - Number(waited))}s`);
+          // OCR couldn't read the name — send hint right now
+          console.log('[OCR] No name found — sending hint immediately');
+          sendHint(msg.channel);
         }
       } else {
-        console.log('[OCR] Worker not ready, hint fallback will handle it');
+        // OCR not ready — send hint right now
+        console.log('[OCR] Worker not ready — sending hint immediately');
+        sendHint(msg.channel);
       }
     }
 

@@ -229,25 +229,50 @@ process.on('uncaughtException', (e) => console.error('[Exception]', e));
 const app = express();
 
 app.get('/', (req, res) => {
-  res.json({ 
-    status: discordReady ? 'ready' : 'connecting', 
-    uptime: process.uptime(),
-    messages_received: messageCount
-  });
+  const uptimeSecs = Math.floor(process.uptime());
+  const hours = Math.floor(uptimeSecs / 3600);
+  const mins = Math.floor((uptimeSecs % 3600) / 60);
+  const secs = uptimeSecs % 60;
+  res.send(`<!DOCTYPE html><html><head><title>Pokétwo Bot Status</title>
+  <style>body{font-family:monospace;background:#1a1a2e;color:#eee;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;}
+  .card{background:#16213e;border-radius:12px;padding:40px 60px;text-align:center;box-shadow:0 0 30px #0f3460;}
+  h1{color:#e94560;margin:0 0 10px;}
+  .status{font-size:2em;margin:20px 0;}
+  .ok{color:#00ff88;}
+  .dim{color:#888;font-size:0.85em;}
+  table{margin:20px auto;border-collapse:collapse;}
+  td{padding:6px 20px;border-bottom:1px solid #0f3460;}
+  td:first-child{color:#888;}
+  td:last-child{color:#00ff88;}
+  </style></head><body>
+  <div class="card">
+    <h1>🎮 Pokétwo Self-Bot</h1>
+    <div class="status">${discordReady ? '<span class="ok">● ONLINE</span>' : '<span style="color:#ffaa00">● CONNECTING</span>'}</div>
+    <table>
+      <tr><td>Service</td><td>${IS_WEB_ONLY ? 'Web (Status Page)' : 'Worker (Bot Active)'}</td></tr>
+      <tr><td>Uptime</td><td>${hours}h ${mins}m ${secs}s</td></tr>
+      <tr><td>Messages Seen</td><td>${messageCount}</td></tr>
+      <tr><td>Spam Channel</td><td>${SPAM_CHANNEL_ID}</td></tr>
+    </table>
+    <div class="dim">Worker is handling catching & spamming</div>
+  </div></body></html>`);
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => console.log('[Server] Running on port', PORT));
 
-console.log('[Login] Connecting to Discord...');
+const SERVICE_NAME = (process.env.RAILWAY_SERVICE_NAME || '').toLowerCase();
+const IS_WEB_ONLY = SERVICE_NAME === 'web' || SERVICE_NAME.includes('web');
 
-if (TOKEN) {
+if (IS_WEB_ONLY) {
+  console.log('[Mode] Running as WEB service (status page only). Discord bot runs on the worker service.');
+} else if (TOKEN) {
+  console.log('[Login] Connecting to Discord as worker...');
   client.login(TOKEN).catch((e) => {
     console.error('[Login Failed]', e.message);
-    setTimeout(() => process.exit(1), 1000);
   });
 } else {
-  console.log('[Login Skipped] No token provided, running web server only.');
+  console.log('[Login Skipped] No token provided.');
 }
 
 setTimeout(() => {

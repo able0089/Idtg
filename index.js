@@ -1,4 +1,7 @@
 if (typeof File === 'undefined') { global.File = require('buffer').File; }
+if (typeof String.prototype.toWellFormed !== 'function') {
+  String.prototype.toWellFormed = function() { return String(this); };
+}
 
 const express = require('express');
 const { Client } = require('discord.js-selfbot-v13');

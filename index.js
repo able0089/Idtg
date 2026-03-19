@@ -215,7 +215,7 @@ function startSpammer() {
     } catch (e) {
       console.error('[Spammer Error]', e.message);
     }
-  }, 2500);
+  }, 3000);
 }
 
 client.once('ready', () => {
